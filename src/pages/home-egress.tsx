@@ -82,13 +82,14 @@ export default function HomeEgressPage() {
         onChange={() => setSaved(false)}
       >
         <Typography>
-          普通代理流量从香港出网。下列站点经香港连接家中 Deco，使用家庭公网 IP。
+          清单内的站点通过所选策略组连接家中 Deco。其他站点使用订阅原有规则。
         </Typography>
         {error && <Alert severity="error">{error}</Alert>}
         {saved && <Alert severity="success">分流配置已应用</Alert>}
         <TextField
           select
-          label="香港前置节点"
+          label="VPN 前置策略组"
+          helperText="在「代理」页切换节点，VPN 下次建隧道时跟随所选策略组。前置节点须支持 UDP。"
           value={carrier}
           disabled={busy || !view}
           onChange={(e) => {
@@ -96,6 +97,11 @@ export default function HomeEgressPage() {
             setSaved(false)
           }}
         >
+          {carrier && view && !view.candidates.includes(carrier) && (
+            <MenuItem value={carrier} disabled>
+              {carrier}（请改选可用策略组）
+            </MenuItem>
+          )}
           {(view?.candidates ?? []).map((name) => (
             <MenuItem key={name} value={name}>
               {name}

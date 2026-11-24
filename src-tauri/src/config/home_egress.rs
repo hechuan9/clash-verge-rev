@@ -7,10 +7,9 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::{Mapping, Value};
-use std::{collections::HashSet, io::ErrorKind};
+use std::io::ErrorKind;
 
 const HOME: &str = "ChuanVPN";
-const HOP: &str = "ChuanVPN · 香港";
 const FILE: &str = "home-egress.json";
 
 #[derive(Deserialize, Serialize)]
@@ -107,7 +106,6 @@ fn parse_deco(source: &str) -> Result<Mapping> {
     node.insert("type".into(), "openvpn".into());
     node.insert("proto".into(), "udp".into());
     node.insert("udp".into(), true.into());
-    node.insert("dialer-proxy".into(), HOP.into());
     node.insert("remote-dns-resolve".into(), true.into());
     node.insert("dns".into(), serde_yaml_ng::to_value(["8.8.8.8"])?);
     Ok(node)
@@ -115,21 +113,29 @@ fn parse_deco(source: &str) -> Result<Mapping> {
 
 fn candidates(config: &Mapping) -> Vec<String> {
     config
+        .get("proxy-groups")
+        .and_then(Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter(|group| group.get("disable-udp").and_then(Value::as_bool) != Some(true))
+        .filter_map(|group| group.get("name")?.as_str().map(str::to_owned))
+        .collect()
+}
+
+fn legacy_carrier(config: &Mapping, name: &str) -> bool {
+    config
         .get("proxies")
         .and_then(Value::as_sequence)
         .into_iter()
         .flatten()
-        .filter_map(|p| {
-            let name = p.get("name")?.as_str()?;
-            let hong_kong =
-                name.contains("香港") || name.contains("🇭🇰") || name.to_ascii_lowercase().contains("hong kong");
-            (hong_kong && p.get("udp").and_then(Value::as_bool) == Some(true) && p.get("dialer-proxy").is_none())
-                .then(|| name.to_owned())
+        .any(|p| {
+            p.get("name").and_then(Value::as_str) == Some(name)
+                && p.get("udp").and_then(Value::as_bool) == Some(true)
+                && p.get("dialer-proxy").is_none()
         })
-        .collect()
 }
 
-fn domain_rule(input: &str) -> Result<String> {
+fn domain_rule(input: &str, target: &str) -> Result<String> {
     let (kind, host) = input
         .strip_prefix("*.")
         .map_or(("DOMAIN", input), |host| ("DOMAIN-SUFFIX", host));
@@ -143,78 +149,67 @@ fn domain_rule(input: &str) -> Result<String> {
                 && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')),
         "Invalid site domain"
     );
-    Ok(format!("{kind},{host},{HOME}"))
+    Ok(format!("{kind},{host},{target}"))
 }
 
 pub async fn apply(config: &mut Mapping) -> Result<()> {
     let Some(settings) = read().await? else {
         return Ok(());
     };
-    ensure!(
-        candidates(config).contains(&settings.carrier),
-        "Selected Hong Kong UDP node is missing from this subscription"
-    );
-    let node = parse_deco(&settings.ovpn)?;
-    let mut targets = HashSet::new();
-    for key in ["proxies", "proxy-groups"] {
-        for p in config.get(key).and_then(Value::as_sequence).into_iter().flatten() {
-            if let Some(name) = p.get("name").and_then(Value::as_str) {
-                ensure!(
-                    name != HOME && name != HOP,
-                    "Conflicting ChuanVPN node or group in profile"
-                );
-                targets.insert(name.to_owned());
-            }
-        }
-    }
-    config
-        .get_mut("proxies")
-        .and_then(Value::as_sequence_mut)
-        .context("Missing subscription nodes")?
-        .push(Value::Mapping(node));
-    let group = serde_json::json!({"name":HOP,"type":"select","proxies":[settings.carrier]});
-    config
-        .entry("proxy-groups".into())
-        .or_insert_with(|| Value::Sequence(vec![]))
-        .as_sequence_mut()
-        .context("Invalid proxy groups")?
-        .push(serde_yaml_ng::to_value(group)?);
+    compose(config, &settings)
+}
+
+fn compose(config: &mut Mapping, settings: &Settings) -> Result<()> {
+    let available = candidates(config).contains(&settings.carrier) || legacy_carrier(config, &settings.carrier);
+    let target = if available { HOME } else { "REJECT" };
     let mut rules = settings
         .domains
         .iter()
-        .map(|d| domain_rule(d).map(Value::from))
+        .map(|d| domain_rule(d, target).map(Value::from))
         .collect::<Result<Vec<_>>>()?;
-    for rule in config
-        .get("rules")
-        .and_then(Value::as_sequence)
-        .context("Missing subscription rules")?
-    {
-        let text = rule.as_str().context("Invalid subscription rule")?;
-        let (body, option) = text
-            .strip_suffix(",no-resolve")
-            .map_or((text, ""), |r| (r, ",no-resolve"));
-        if let Some((pattern, target)) = body.rsplit_once(',')
-            && targets.contains(target.trim())
-        {
-            rules.push(format!("{pattern},{HOP}{option}").into());
-        } else {
-            rules.push(rule.clone());
-        }
-    }
-    config.insert("rules".into(), rules.into());
-    if let Some(servers) = config
-        .get_mut("dns")
-        .and_then(|dns| dns.get_mut("nameserver"))
+    let existing = config
+        .get_mut("rules")
         .and_then(Value::as_sequence_mut)
-    {
-        for server in servers {
-            if let Some((url, policy)) = server.as_str().and_then(|url| url.rsplit_once('#'))
-                && targets.contains(policy)
+        .context("Missing subscription rules")?;
+    rules.append(existing);
+    *existing = rules;
+    if !available {
+        return Ok(());
+    }
+
+    for key in ["proxies", "proxy-groups"] {
+        ensure!(
+            !config
+                .get(key)
+                .and_then(Value::as_sequence)
+                .into_iter()
+                .flatten()
+                .any(|p| p.get("name").and_then(Value::as_str) == Some(HOME)),
+            "Conflicting ChuanVPN name in profile"
+        );
+    }
+    if let Some(groups) = config.get_mut("proxy-groups").and_then(Value::as_sequence_mut) {
+        for group in groups {
+            if ["include-all", "include-all-proxies"]
+                .iter()
+                .any(|k| group.get(*k).and_then(Value::as_bool) == Some(true))
             {
-                *server = format!("{url}#{HOP}").into();
+                let filter = match group.get("exclude-filter").and_then(Value::as_str) {
+                    Some(f) if !f.is_empty() => format!("{f}`^{HOME}$"),
+                    _ => format!("^{HOME}$"),
+                };
+                group["exclude-filter"] = filter.into();
             }
         }
     }
+    let mut node = parse_deco(&settings.ovpn)?;
+    node.insert("dialer-proxy".into(), settings.carrier.clone().into());
+    config
+        .entry("proxies".into())
+        .or_insert_with(|| Value::Sequence(vec![]))
+        .as_sequence_mut()
+        .context("Invalid subscription nodes")?
+        .push(Value::Mapping(node));
     Ok(())
 }
 
@@ -254,8 +249,18 @@ async fn save(carrier: String, domains: Vec<String>, ovpn: Option<String>) -> Re
         .context("Import a Deco profile first")?;
     parse_deco(&ovpn)?;
     for domain in &domains {
-        domain_rule(domain)?;
+        domain_rule(domain, HOME)?;
     }
+    let runtime = Config::runtime().await;
+    let current = runtime.data_arc();
+    let config = current.config.as_ref().context("No active subscription")?;
+    ensure!(
+        candidates(config).contains(&carrier)
+            || prior
+                .as_ref()
+                .is_some_and(|old| old.carrier == carrier && legacy_carrier(config, &carrier)),
+        "Select an available UDP carrier group"
+    );
     let next = Settings { carrier, domains, ovpn };
     let path = dirs::app_home_dir()?.join(FILE);
     help::save_yaml_str(&path, &serde_json::to_string(&next)?).await?;
@@ -271,6 +276,33 @@ async fn save(carrier: String, domains: Vec<String>, ovpn: Option<String>) -> Re
             .map_err(|_| anyhow!("Apply failed; previous settings restored on disk but core reload failed"))?;
         bail!("{error}");
     }
+    drop(update);
+    drop(write);
     Handle::refresh_clash();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_group_blocks_only_home_domains() -> Result<()> {
+        let mut config: Mapping = serde_yaml_ng::from_str(
+            "proxy-groups: [{name: Other, type: select, proxies: [DIRECT]}]\nrules: ['MATCH,Other']",
+        )?;
+        compose(
+            &mut config,
+            &Settings {
+                carrier: "Removed".into(),
+                domains: vec!["*.example.org".into()],
+                ovpn: String::new(),
+            },
+        )?;
+        assert_eq!(
+            config["rules"],
+            serde_yaml_ng::to_value(["DOMAIN-SUFFIX,example.org,REJECT", "MATCH,Other"])?
+        );
+        Ok(())
+    }
 }

@@ -21,7 +21,7 @@
      GitHub, so they never reach users. -->
 ## ChuanVPN Home
 
-- macOS：新增「家庭出口」，可选香港前置节点并将指定站点经 Deco VPN 出网。
+- macOS：新增「家庭出口」，按所选策略组连接 Deco VPN，其余站点沿用订阅分流。
 
 ## v2.5.10
 
