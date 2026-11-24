@@ -19,6 +19,10 @@
        scripts-workflow/group_platforms.sh regroups, --check verifies
      HTML comments are stripped by the update dialog's sanitizer and hidden on
      GitHub, so they never reach users. -->
+## ChuanVPN Home
+
+- macOS：新增「家庭出口」，可选香港前置节点并将指定站点经 Deco VPN 出网。
+
 ## v2.5.10
 
 <details>

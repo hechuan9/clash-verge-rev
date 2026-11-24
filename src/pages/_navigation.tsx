@@ -5,6 +5,7 @@ import LanguageOutlinedIcon from '@mui/icons-material/LanguageOutlined'
 import LockOpenOutlinedIcon from '@mui/icons-material/LockOpenOutlined'
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import SubjectOutlinedIcon from '@mui/icons-material/SubjectOutlined'
+import VpnLockOutlinedIcon from '@mui/icons-material/VpnLockOutlined'
 import WifiOutlinedIcon from '@mui/icons-material/WifiOutlined'
 import { type ComponentType, type ReactNode } from 'react'
 
@@ -20,6 +21,7 @@ import UnlockSvg from '@/assets/image/itemicon/unlock.svg?react'
 import { navigationItems } from './_navigation-meta'
 import ConnectionsPage from './connections'
 import HomePage from './home'
+import HomeEgressPage from './home-egress'
 import LogsPage from './logs'
 import ProfilePage from './profiles'
 import ProxyPage from './proxies'
@@ -44,6 +46,14 @@ export const navItems: NavigationItem[] = [
     ...navigationItems.proxies,
     icon: [<WifiOutlinedIcon key="mui" />, <ProxiesSvg key="svg" />],
     Component: ProxyPage,
+  },
+  {
+    ...navigationItems.homeEgress,
+    icon: [
+      <VpnLockOutlinedIcon key="mui" />,
+      <VpnLockOutlinedIcon key="svg" />,
+    ],
+    Component: HomeEgressPage,
   },
   {
     ...navigationItems.profiles,

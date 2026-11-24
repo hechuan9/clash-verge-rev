@@ -62,6 +62,9 @@ pub async fn install_update(
     version: std::string::String,
     on_event: Channel<DownloadEvent>,
 ) -> CmdResult<bool> {
+    if cfg!(feature = "home-edition") {
+        return Err("Update the home edition from its own build".into());
+    }
     let version: String = version.into();
     SilentUpdater::global()
         .install_update(&app_handle, &version, |event| {

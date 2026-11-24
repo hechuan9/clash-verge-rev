@@ -81,11 +81,13 @@ pub async fn save_yaml<T: Serialize + Sync>(path: &Path, data: &T, prefix: Optio
 pub async fn save_yaml_str(path: &Path, yaml_str: &str) -> Result<()> {
     let (temporary, file) = loop {
         let temporary = path.with_extension(format!("tmp-{}-{}", std::process::id(), nanoid!()));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
+        let mut options = std::fs::OpenOptions::new();
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        match options.write(true).create_new(true).open(&temporary) {
             Ok(file) => break (temporary, file),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => {
@@ -113,7 +115,13 @@ pub async fn save_yaml_str(path: &Path, yaml_str: &str) -> Result<()> {
     drop(file);
 
     match tokio::fs::symlink_metadata(path).await {
-        Ok(metadata) if metadata.file_type().is_file() => {
+        Ok(metadata)
+            if metadata.file_type().is_file()
+                && !matches!(
+                    path.file_name().and_then(|v| v.to_str()),
+                    Some("home-egress.json" | "clash-verge.yaml" | "clash-verge-check.yaml")
+                ) =>
+        {
             tokio::fs::set_permissions(temporary.as_path(), metadata.permissions())
                 .await
                 .with_context(|| format!("failed to preserve permissions for \"{}\"", path.display()))?;

@@ -70,6 +70,8 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             cmd::exit_app,
             cmd::get_network_interfaces_info,
             cmd::get_profiles,
+            crate::config::home_egress::get_home_egress,
+            crate::config::home_egress::save_home_egress,
             cmd::enhance_profiles,
             cmd::patch_profiles_config,
             cmd::view_profile,

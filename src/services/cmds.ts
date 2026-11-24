@@ -38,6 +38,9 @@ export async function getProfiles(): Promise<IProfilesConfig> {
   return commands.getProfiles()
 }
 
+export const getHomeEgress = commands.getHomeEgress
+export const saveHomeEgress = commands.saveHomeEgress
+
 export async function enhanceProfiles() {
   return (await commands.enhanceProfiles()).status === 'valid'
 }

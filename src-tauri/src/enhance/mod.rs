@@ -961,7 +961,8 @@ pub async fn enhance(
     let config = authoritative.enforce(config);
     let config = ensure_lan_bind_address(config);
 
-    let config = cleanup_proxy_groups(config);
+    let mut config = cleanup_proxy_groups(config);
+    crate::config::home_egress::apply(&mut config).await?;
     let config = use_sort(config);
 
     let mut exists_keys_set = HashSet::new();

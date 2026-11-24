@@ -3,6 +3,7 @@
     "navigation": {
       "tabs": {
         "home": "Home",
+        "homeEgress": "Home egress",
         "proxies": "پراکسی‌ها",
         "profiles": "پروفایل‌ها",
         "connections": "اتصالات",

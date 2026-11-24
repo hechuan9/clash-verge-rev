@@ -3,6 +3,7 @@
     "navigation": {
       "tabs": {
         "home": "Главная",
+        "homeEgress": "Home egress",
         "proxies": "Прокси",
         "profiles": "Профили",
         "connections": "Соединения",

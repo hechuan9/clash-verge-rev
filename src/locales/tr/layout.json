@@ -3,6 +3,7 @@
     "navigation": {
       "tabs": {
         "home": "Ana Sayfa",
+        "homeEgress": "Home egress",
         "proxies": "Vekil'ler",
         "profiles": "Profiller",
         "connections": "Bağlantılar",

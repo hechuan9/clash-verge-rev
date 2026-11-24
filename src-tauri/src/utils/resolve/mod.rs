@@ -167,6 +167,9 @@ async fn init_auto_backup() {
 }
 
 async fn init_silent_updater() {
+    if cfg!(feature = "home-edition") {
+        return;
+    }
     use crate::core::SilentUpdater;
     use crate::core::handle::Handle;
 

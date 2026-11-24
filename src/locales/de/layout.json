@@ -3,6 +3,7 @@
     "navigation": {
       "tabs": {
         "home": "Startseite",
+        "homeEgress": "Home egress",
         "proxies": "Proxy",
         "profiles": "Abonnement",
         "connections": "Verbindungen",

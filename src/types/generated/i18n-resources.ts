@@ -207,6 +207,7 @@ export interface TranslationResources {
           tabs: {
             connections: string
             home: string
+            homeEgress: string
             logs: string
             profiles: string
             proxies: string
@@ -1589,6 +1590,7 @@ export interface TranslationResources {
           noDisney: string
           originalsOnly: string
           pending: string
+          risky: string
           unsupportedRegion: string
           yes: string
         }
