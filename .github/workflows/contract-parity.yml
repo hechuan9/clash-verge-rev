@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src-tauri/**/*.rs"
+      - "src/features/vpn/**/*.rs"
       - "crates/**/*.rs"
       - "Cargo.toml"
       - "Cargo.lock"

@@ -1,6 +1,7 @@
 {
   "contract": [
     "src-tauri/**/*.rs",
+    "src/features/vpn/**/*.rs",
     "crates/**/*.rs",
     "Cargo.toml",
     "Cargo.lock",

@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src-tauri/**"
+      - "src/features/vpn/**/*.rs"
       - ".github/workflows/backend-guardrails.yml"
   workflow_dispatch:
 
@@ -20,7 +21,7 @@ jobs:
         run: '! grep -rn "Handle::refresh" src-tauri/src/feat'
 
       - name: No notice_message outside core/notify
-        run: '! grep -rn "notice_message(" src-tauri/src --include="*.rs" | grep -v "core/notify"'
+        run: '! grep -rn "notice_message(" src-tauri/src src/features/vpn --include="*.rs" | grep -v "core/notify"'
 
       - name: No manual update-flag chains
-        run: '! grep -rnE "determine_update_flags|UpdateFlags" src-tauri/src'
+        run: '! grep -rnE "determine_update_flags|UpdateFlags" src-tauri/src src/features/vpn --include="*.rs"'

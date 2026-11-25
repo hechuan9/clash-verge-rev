@@ -17,11 +17,11 @@ import ProxiesSvg from '@/assets/image/itemicon/proxies.svg?react'
 import RulesSvg from '@/assets/image/itemicon/rules.svg?react'
 import SettingsSvg from '@/assets/image/itemicon/settings.svg?react'
 import UnlockSvg from '@/assets/image/itemicon/unlock.svg?react'
+import VpnPage from '@/features/vpn/VpnPage'
 
 import { navigationItems } from './_navigation-meta'
 import ConnectionsPage from './connections'
 import HomePage from './home'
-import HomeEgressPage from './home-egress'
 import LogsPage from './logs'
 import ProfilePage from './profiles'
 import ProxyPage from './proxies'
@@ -53,7 +53,7 @@ export const navItems: NavigationItem[] = [
       <VpnLockOutlinedIcon key="mui" />,
       <VpnLockOutlinedIcon key="svg" />,
     ],
-    Component: HomeEgressPage,
+    Component: VpnPage,
   },
   {
     ...navigationItems.profiles,

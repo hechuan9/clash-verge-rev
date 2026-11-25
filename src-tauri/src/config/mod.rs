@@ -3,6 +3,7 @@ mod clash;
 mod config;
 pub(crate) mod dns;
 mod encrypt;
+#[path = "../../../src/features/vpn/config.rs"]
 pub(crate) mod home_egress;
 mod mixed_port;
 mod port;
