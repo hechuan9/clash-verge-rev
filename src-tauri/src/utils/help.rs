@@ -119,7 +119,7 @@ pub async fn save_yaml_str(path: &Path, yaml_str: &str) -> Result<()> {
             if metadata.file_type().is_file()
                 && !matches!(
                     path.file_name().and_then(|v| v.to_str()),
-                    Some("home-egress.json" | "clash-verge.yaml" | "clash-verge-check.yaml")
+                    Some("vpn.json" | "clash-verge.yaml" | "clash-verge-check.yaml")
                 ) =>
         {
             tokio::fs::set_permissions(temporary.as_path(), metadata.permissions())

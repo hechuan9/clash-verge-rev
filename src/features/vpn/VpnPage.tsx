@@ -24,7 +24,7 @@ function domainsFromText(input: string) {
   return [...new Set(entries)]
 }
 
-export default function HomeEgressPage() {
+export default function VpnPage() {
   const [view, setView] = useState<HomeEgressView | null>(null)
   const [domains, setDomains] = useState('')
   const [file, setFile] = useState<File | null>(null)
