@@ -1,12 +1,4 @@
-import {
-  Alert,
-  Box,
-  Button,
-  MenuItem,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material'
+import { Alert, Box, Button, Stack, TextField, Typography } from '@mui/material'
 import { useEffect, useState } from 'react'
 
 import { BasePage } from '@/components/base'
@@ -34,7 +26,6 @@ function domainsFromText(input: string) {
 
 export default function HomeEgressPage() {
   const [view, setView] = useState<HomeEgressView | null>(null)
-  const [carrier, setCarrier] = useState('')
   const [domains, setDomains] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
@@ -44,7 +35,6 @@ export default function HomeEgressPage() {
   const load = async () => {
     const next = await getHomeEgress()
     setView(next)
-    setCarrier(next.carrier ?? '')
     setDomains(next.domains.join('\n'))
   }
   useEffect(() => {
@@ -56,14 +46,11 @@ export default function HomeEgressPage() {
     setSaved(false)
     setError('')
     try {
-      const ovpn = file ? await file.text() : null
-      await mutate(
-        () => saveHomeEgress(carrier, domainsFromText(domains), ovpn),
-        {
-          id: 'save-home-egress',
-          errorNotice: false,
-        },
-      )
+      const wireguard = file ? await file.text() : null
+      await mutate(() => saveHomeEgress(domainsFromText(domains), wireguard), {
+        id: 'save-home-egress',
+        errorNotice: false,
+      })
       setFile(null)
       await load()
       setSaved(true)
@@ -75,49 +62,27 @@ export default function HomeEgressPage() {
   }
 
   return (
-    <BasePage title="家庭出口">
+    <BasePage title="VPN">
       <Stack
         spacing={2.5}
         sx={{ maxWidth: 640, p: 2 }}
         onChange={() => setSaved(false)}
       >
         <Typography>
-          清单内的站点通过所选策略组连接家中 Deco。其他站点使用订阅原有规则。
+          清单内的站点通过 WireGuard 出口访问。其他站点使用订阅原有规则。
         </Typography>
         {error && <Alert severity="error">{error}</Alert>}
         {saved && <Alert severity="success">分流配置已应用</Alert>}
-        <TextField
-          select
-          label="VPN 前置策略组"
-          helperText="在「代理」页切换节点，VPN 下次建隧道时跟随所选策略组。前置节点须支持 UDP。"
-          value={carrier}
-          disabled={busy || !view}
-          onChange={(e) => {
-            setCarrier(e.target.value)
-            setSaved(false)
-          }}
-        >
-          {carrier && view && !view.candidates.includes(carrier) && (
-            <MenuItem value={carrier} disabled>
-              {carrier}（请改选可用策略组）
-            </MenuItem>
-          )}
-          {(view?.candidates ?? []).map((name) => (
-            <MenuItem key={name} value={name}>
-              {name}
-            </MenuItem>
-          ))}
-        </TextField>
         <Box>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            家庭 OpenVPN · {file?.name ?? view?.server ?? '尚未导入'}
+            WireGuard · {file?.name ?? view?.server ?? '尚未导入'}
           </Typography>
           <Button component="label" variant="outlined" disabled={busy}>
-            导入 Deco .ovpn
+            导入 WireGuard .conf
             <input
               hidden
               type="file"
-              accept=".ovpn"
+              accept=".conf"
               onChange={(e) => {
                 setFile(e.target.files?.[0] ?? null)
                 e.target.value = ''
@@ -129,7 +94,7 @@ export default function HomeEgressPage() {
         <TextField
           multiline
           minRows={7}
-          label="使用家庭出口的站点"
+          label="使用 VPN 的站点"
           value={domains}
           disabled={busy}
           helperText="每行一个域名或 URL。*.claude.ai 包含主域名及所有子域名。"
@@ -139,7 +104,7 @@ export default function HomeEgressPage() {
           <Button
             variant="contained"
             onClick={() => void apply()}
-            disabled={busy || !carrier || (!view?.server && !file)}
+            disabled={busy || !view || (!view.server && !file)}
           >
             {busy ? '正在应用…' : '应用配置'}
           </Button>

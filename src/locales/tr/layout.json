@@ -3,7 +3,7 @@
     "navigation": {
       "tabs": {
         "home": "Ana Sayfa",
-        "homeEgress": "Home egress",
+        "homeEgress": "VPN",
         "proxies": "Vekil'ler",
         "profiles": "Profiller",
         "connections": "Bağlantılar",

@@ -140,8 +140,8 @@ export const commands = {
     __TAURI_INVOKE<NetworkInterfaceView[]>('get_network_interfaces_info'),
   getProfiles: () => __TAURI_INVOKE<IProfiles_Serialize>('get_profiles'),
   getHomeEgress: () => __TAURI_INVOKE<HomeEgressView>('get_home_egress'),
-  saveHomeEgress: (carrier: string, domains: string[], ovpn: string | null) =>
-    __TAURI_INVOKE<null>('save_home_egress', { carrier, domains, ovpn }),
+  saveHomeEgress: (domains: string[], wireguard: string | null) =>
+    __TAURI_INVOKE<null>('save_home_egress', { domains, wireguard }),
   enhanceProfiles: () => __TAURI_INVOKE<ValidationOutcome>('enhance_profiles'),
   patchProfilesConfig: (profiles: ProfileSelection) =>
     __TAURI_INVOKE<ValidationOutcome>('patch_profiles_config', { profiles }),
@@ -316,8 +316,6 @@ export type FailedOperation =
   | 'systemProxyGuard'
 
 export type HomeEgressView = {
-  carrier: string | null
-  candidates: string[]
   domains: string[]
   server: string | null
 }

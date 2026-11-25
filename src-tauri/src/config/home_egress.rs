@@ -5,24 +5,22 @@ use crate::{
     utils::{dirs, help},
 };
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::{Mapping, Value};
-use std::io::ErrorKind;
+use std::{collections::BTreeMap, io::ErrorKind, net::Ipv4Addr};
 
 const HOME: &str = "ChuanVPN";
-const FILE: &str = "home-egress.json";
+const FILE: &str = "vpn.json";
 
 #[derive(Deserialize, Serialize)]
 struct Settings {
-    carrier: String,
     domains: Vec<String>,
-    ovpn: String,
+    wireguard: String,
 }
 
 #[derive(Serialize, specta::Type)]
 pub struct HomeEgressView {
-    carrier: Option<String>,
-    candidates: Vec<String>,
     domains: Vec<String>,
     server: Option<String>,
 }
@@ -35,104 +33,101 @@ async fn read() -> Result<Option<Settings>> {
     }
 }
 
-fn parse_deco(source: &str) -> Result<Mapping> {
-    let mut node = Mapping::new();
-    let mut lines = source.trim_start_matches('\u{feff}').lines().map(str::trim);
-    let mut udp = false;
-    while let Some(line) = lines.next() {
-        if line.is_empty() || line.starts_with(['#', ';']) {
+fn parse_wireguard(source: &str) -> Result<Mapping> {
+    let mut interface = BTreeMap::new();
+    let mut peer = BTreeMap::new();
+    let mut section = "";
+    for line in source.trim_start_matches('\u{feff}').lines() {
+        let line = line.split('#').next().unwrap_or_default().trim();
+        if line.is_empty() {
             continue;
         }
-        if let Some(tag) = line.strip_prefix('<').and_then(|s| s.strip_suffix('>')) {
-            ensure!(
-                matches!(tag, "ca" | "cert" | "key" | "tls-auth" | "tls-crypt"),
-                "Unsupported OpenVPN block"
-            );
-            let end = format!("</{tag}>");
-            let mut data = String::new();
-            loop {
-                let next = lines.next().context("Incomplete OpenVPN block")?;
-                if next == end {
-                    break;
-                }
-                data.push_str(next);
-                data.push('\n');
-            }
-            ensure!(!data.trim().is_empty(), "Empty OpenVPN block");
-            node.insert(tag.into(), data.into());
+        if line == "[Interface]" && section.is_empty() {
+            section = line;
             continue;
         }
-        let words: Vec<_> = line.split_ascii_whitespace().collect();
-        match words.as_slice() {
-            ["proto", "udp" | "udp4"] => udp = true,
-            ["remote", server, port] => {
-                ensure!(!node.contains_key("server"), "Only one Deco endpoint is supported");
-                let port: u16 = port.parse().context("Invalid Deco UDP port")?;
-                ensure!(port > 0, "Invalid Deco UDP port");
-                node.insert("server".into(), (*server).into());
-                node.insert("port".into(), port.into());
-            }
-            [
-                key @ ("cipher" | "auth" | "data-ciphers-fallback" | "comp-lzo" | "key-direction"),
-                value,
-            ] => {
-                node.insert((*key).into(), (*value).into());
-            }
-            ["data-ciphers", value] => {
-                node.insert(
-                    "data-ciphers".into(),
-                    serde_yaml_ng::to_value(value.split(':').collect::<Vec<_>>())?,
-                );
-            }
-            ["client" | "float" | "nobind" | "persist-key" | "persist-tun"]
-            | ["dev", "tun"]
-            | ["resolv-retry", "infinite"]
-            | ["remote-cert-tls", "server"]
-            | ["verb", _] => {}
-            _ => bail!("Unsupported directive in Deco OpenVPN UDP profile"),
+        if line == "[Peer]" && section == "[Interface]" {
+            section = line;
+            continue;
         }
+        let (key, value) = line.split_once('=').context("Invalid WireGuard configuration")?;
+        let (key, value) = (key.trim(), value.trim());
+        let fields = match (section, key) {
+            ("[Interface]", "PrivateKey" | "Address" | "DNS" | "MTU") => &mut interface,
+            ("[Peer]", "PublicKey" | "PresharedKey" | "Endpoint" | "AllowedIPs" | "PersistentKeepalive") => &mut peer,
+            _ => bail!("Unsupported WireGuard directive"),
+        };
+        ensure!(
+            !value.is_empty() && fields.insert(key, value).is_none(),
+            "Invalid or duplicate WireGuard directive"
+        );
     }
+
+    let key = |fields: &BTreeMap<&str, &str>, name: &str| -> Result<String> {
+        let value = fields.get(name).with_context(|| format!("Missing WireGuard {name}"))?;
+        ensure!(
+            STANDARD.decode(value).is_ok_and(|bytes| bytes.len() == 32),
+            "Invalid WireGuard {name}"
+        );
+        Ok((*value).to_owned())
+    };
+    let (ip, prefix) = interface
+        .get("Address")
+        .and_then(|address| address.split_once('/'))
+        .context("WireGuard Address must include an IPv4 prefix")?;
+    let ip = ip.parse::<Ipv4Addr>().context("Invalid WireGuard IPv4 address")?;
     ensure!(
-        udp && ["server", "ca", "cert", "key"]
-            .iter()
-            .all(|key| node.contains_key(*key)),
-        "A Deco UDP profile with embedded CA, certificate and key is required"
+        prefix.parse::<u8>().is_ok_and(|bits| bits <= 32),
+        "Invalid WireGuard IPv4 prefix"
     );
-    if let Some(cipher) = node.get("cipher").cloned() {
-        node.entry("data-ciphers-fallback".into()).or_insert(cipher);
+
+    let endpoint = peer.get("Endpoint").context("Missing WireGuard Endpoint")?;
+    let (server, port) = endpoint
+        .rsplit_once(':')
+        .context("WireGuard Endpoint requires a port")?;
+    if server.parse::<Ipv4Addr>().is_err() {
+        ensure!(!server.starts_with("*."), "Invalid WireGuard server");
+        domain_rule(server, HOME).context("Invalid WireGuard server")?;
     }
-    node.entry("auth".into()).or_insert_with(|| "SHA1".into());
+    let port = port.parse::<u16>().context("Invalid WireGuard port")?;
+    ensure!(port != 0, "Invalid WireGuard port");
+    ensure!(
+        peer.get("AllowedIPs").copied() == Some("0.0.0.0/0"),
+        "WireGuard AllowedIPs must be 0.0.0.0/0"
+    );
+
+    let mut node = Mapping::new();
     node.insert("name".into(), HOME.into());
-    node.insert("type".into(), "openvpn".into());
-    node.insert("proto".into(), "udp".into());
+    node.insert("type".into(), "wireguard".into());
+    node.insert("server".into(), server.into());
+    node.insert("port".into(), port.into());
+    node.insert("ip".into(), ip.to_string().into());
+    node.insert("private-key".into(), key(&interface, "PrivateKey")?.into());
+    node.insert("public-key".into(), key(&peer, "PublicKey")?.into());
+    node.insert("allowed-ips".into(), serde_yaml_ng::to_value(["0.0.0.0/0"])?);
     node.insert("udp".into(), true.into());
-    node.insert("remote-dns-resolve".into(), true.into());
-    node.insert("dns".into(), serde_yaml_ng::to_value(["8.8.8.8"])?);
+    if peer.contains_key("PresharedKey") {
+        node.insert("pre-shared-key".into(), key(&peer, "PresharedKey")?.into());
+    }
+    if let Some(value) = peer.get("PersistentKeepalive") {
+        let keepalive = value.parse::<u16>().context("Invalid WireGuard PersistentKeepalive")?;
+        node.insert("persistent-keepalive".into(), keepalive.into());
+    }
+    if let Some(value) = interface.get("MTU") {
+        let mtu = value.parse::<u16>().context("Invalid WireGuard MTU")?;
+        ensure!(mtu >= 576, "Invalid WireGuard MTU");
+        node.insert("mtu".into(), mtu.into());
+    }
+    if let Some(value) = interface.get("DNS") {
+        let dns = value
+            .split(',')
+            .map(|address| address.trim().parse::<Ipv4Addr>().map(|ip| ip.to_string()))
+            .collect::<Result<Vec<_>, _>>()
+            .context("Invalid WireGuard DNS address")?;
+        node.insert("remote-dns-resolve".into(), true.into());
+        node.insert("dns".into(), serde_yaml_ng::to_value(dns)?);
+    }
     Ok(node)
-}
-
-fn candidates(config: &Mapping) -> Vec<String> {
-    config
-        .get("proxy-groups")
-        .and_then(Value::as_sequence)
-        .into_iter()
-        .flatten()
-        .filter(|group| group.get("disable-udp").and_then(Value::as_bool) != Some(true))
-        .filter_map(|group| group.get("name")?.as_str().map(str::to_owned))
-        .collect()
-}
-
-fn legacy_carrier(config: &Mapping, name: &str) -> bool {
-    config
-        .get("proxies")
-        .and_then(Value::as_sequence)
-        .into_iter()
-        .flatten()
-        .any(|p| {
-            p.get("name").and_then(Value::as_str) == Some(name)
-                && p.get("udp").and_then(Value::as_bool) == Some(true)
-                && p.get("dialer-proxy").is_none()
-        })
 }
 
 fn domain_rule(input: &str, target: &str) -> Result<String> {
@@ -160,12 +155,11 @@ pub async fn apply(config: &mut Mapping) -> Result<()> {
 }
 
 fn compose(config: &mut Mapping, settings: &Settings) -> Result<()> {
-    let available = candidates(config).contains(&settings.carrier) || legacy_carrier(config, &settings.carrier);
-    let target = if available { HOME } else { "REJECT" };
+    let node = parse_wireguard(&settings.wireguard)?;
     let mut rules = settings
         .domains
         .iter()
-        .map(|d| domain_rule(d, target).map(Value::from))
+        .map(|d| domain_rule(d, HOME).map(Value::from))
         .collect::<Result<Vec<_>>>()?;
     let existing = config
         .get_mut("rules")
@@ -173,9 +167,6 @@ fn compose(config: &mut Mapping, settings: &Settings) -> Result<()> {
         .context("Missing subscription rules")?;
     rules.append(existing);
     *existing = rules;
-    if !available {
-        return Ok(());
-    }
 
     for key in ["proxies", "proxy-groups"] {
         ensure!(
@@ -202,8 +193,6 @@ fn compose(config: &mut Mapping, settings: &Settings) -> Result<()> {
             }
         }
     }
-    let mut node = parse_deco(&settings.ovpn)?;
-    node.insert("dialer-proxy".into(), settings.carrier.clone().into());
     config
         .entry("proxies".into())
         .or_insert_with(|| Value::Sequence(vec![]))
@@ -217,17 +206,13 @@ fn compose(config: &mut Mapping, settings: &Settings) -> Result<()> {
 #[specta::specta]
 pub async fn get_home_egress() -> CmdResult<HomeEgressView> {
     let settings = read().await.stringify_err()?;
-    let runtime = Config::runtime().await;
-    let candidates = runtime.data_arc().config.as_ref().map(candidates).unwrap_or_default();
     let server = settings
         .as_ref()
-        .map(|s| parse_deco(&s.ovpn))
+        .map(|s| parse_wireguard(&s.wireguard))
         .transpose()
         .stringify_err()?
-        .and_then(|n| n.get("server")?.as_str().map(str::to_owned));
+        .and_then(|n| Some(format!("{}:{}", n.get("server")?.as_str()?, n.get("port")?.as_u64()?)));
     Ok(HomeEgressView {
-        carrier: settings.as_ref().map(|s| s.carrier.clone()),
-        candidates,
         server,
         domains: settings.map(|s| s.domains).unwrap_or_default(),
     })
@@ -235,33 +220,23 @@ pub async fn get_home_egress() -> CmdResult<HomeEgressView> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn save_home_egress(carrier: String, domains: Vec<String>, ovpn: Option<String>) -> CmdResult<()> {
-    save(carrier, domains, ovpn).await.stringify_err()
+pub async fn save_home_egress(domains: Vec<String>, wireguard: Option<String>) -> CmdResult<()> {
+    save(domains, wireguard).await.stringify_err()
 }
 
-async fn save(carrier: String, domains: Vec<String>, ovpn: Option<String>) -> Result<()> {
+async fn save(domains: Vec<String>, wireguard: Option<String>) -> Result<()> {
     let write = Config::lock_config_write().await;
     let manager = CoreManager::global();
     let update = manager.claim_config_update(&write)?;
     let prior = read().await?;
-    let ovpn = ovpn
-        .or_else(|| prior.as_ref().map(|p| p.ovpn.clone()))
-        .context("Import a Deco profile first")?;
-    parse_deco(&ovpn)?;
+    let wireguard = wireguard
+        .or_else(|| prior.as_ref().map(|p| p.wireguard.clone()))
+        .context("Import a WireGuard profile first")?;
+    parse_wireguard(&wireguard)?;
     for domain in &domains {
         domain_rule(domain, HOME)?;
     }
-    let runtime = Config::runtime().await;
-    let current = runtime.data_arc();
-    let config = current.config.as_ref().context("No active subscription")?;
-    ensure!(
-        candidates(config).contains(&carrier)
-            || prior
-                .as_ref()
-                .is_some_and(|old| old.carrier == carrier && legacy_carrier(config, &carrier)),
-        "Select an available UDP carrier group"
-    );
-    let next = Settings { carrier, domains, ovpn };
+    let next = Settings { domains, wireguard };
     let path = dirs::app_home_dir()?.join(FILE);
     help::save_yaml_str(&path, &serde_json::to_string(&next)?).await?;
     if let Err(error) = manager.update_config_in_patch(&update).await {
@@ -287,22 +262,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_group_blocks_only_home_domains() -> Result<()> {
-        let mut config: Mapping = serde_yaml_ng::from_str(
-            "proxy-groups: [{name: Other, type: select, proxies: [DIRECT]}]\nrules: ['MATCH,Other']",
-        )?;
+    fn wireguard_rules_precede_subscription_rules() -> Result<()> {
+        let mut config: Mapping = serde_yaml_ng::from_str("rules: ['MATCH,DIRECT']")?;
+        let key = STANDARD.encode([1; 32]);
+        let wireguard = format!(
+            "[Interface]\nAddress = 10.0.0.2/32\nPrivateKey = {key}\nDNS = 1.1.1.1\nMTU = 1380\n\n[Peer]\nPublicKey = {key}\nEndpoint = 192.0.2.1:51820\nAllowedIPs = 0.0.0.0/0"
+        );
         compose(
             &mut config,
             &Settings {
-                carrier: "Removed".into(),
                 domains: vec!["*.example.org".into()],
-                ovpn: String::new(),
+                wireguard,
             },
         )?;
         assert_eq!(
             config["rules"],
-            serde_yaml_ng::to_value(["DOMAIN-SUFFIX,example.org,REJECT", "MATCH,Other"])?
+            serde_yaml_ng::to_value(["DOMAIN-SUFFIX,example.org,ChuanVPN", "MATCH,DIRECT"])?
         );
+        let node = &config["proxies"][0];
+        assert_eq!(node["type"].as_str(), Some("wireguard"));
+        assert_eq!(node["server"].as_str(), Some("192.0.2.1"));
+        assert_eq!(node["port"].as_u64(), Some(51820));
+        assert_eq!(node["mtu"].as_u64(), Some(1380));
         Ok(())
     }
 }
